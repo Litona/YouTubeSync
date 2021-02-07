@@ -18,6 +18,7 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -108,9 +109,9 @@ public final class SongGUI {
 				@Override
 				public void actionPerformed(ActionEvent e) {
 					if(((JCheckBox) e.getSource()).isSelected())
-						tagsField.setText(tagsField.getText() + " " + t);
+						tagsField.setText(tagsField.getText() + " " + t + " ");
 					else
-						tagsField.setText(tagsField.getText().replaceAll(t, ""));
+						tagsField.setText(tagsField.getText().replaceAll(" " + t + " ", ""));
 					updateTagsList();
 				}
 			})));
@@ -141,6 +142,14 @@ public final class SongGUI {
 								&& !simpleTitleField.getText().isEmpty() ?
 								interpretField.getText().trim().replaceAll("[\\s&]+", "+") + "+" + simpleTitleField.getText().trim().replaceAll(" ", "+") :
 								(ytTitle != null ? ytTitle.trim().replaceAll("[\\s&]+", "+") : ""))));
+						/**
+						 * Regex explanation for "[\s&]+"
+						 * + one or more characters from the class []
+						 * [\\s&] class of whitespace and "&"
+						 *
+						 * Google url uses "+" instead of whitespace
+						 * and & is a special character in the url, so we replace that
+						 */
 					} catch(IOException | URISyntaxException ioException) {
 						ioException.printStackTrace();
 					}
@@ -202,7 +211,7 @@ public final class SongGUI {
 		this();
 		urlField.setText("https://www.youtube.com/watch?v=" + preSong.getYtId());
 		//urlFound();
-		tagsField.setText(String.join(" ", preSong.getTags()));
+		tagsField.setText(" " + String.join(" ", preSong.getTags()) + " ");
 		updateTagsList();
 		progressBar1.setMaximum(numberOfSongs);
 		progressBar1.setValue(indexOfSongs + 1);
@@ -246,8 +255,8 @@ public final class SongGUI {
 				Desktop.getDesktop().browse(new URI("https://www.google.com/search?q=" + (
 					interpretField.getText() != null && !interpretField.getText().isEmpty() && simpleTitleField.getText() != null && !simpleTitleField
 						.getText().isEmpty() ?
-						interpretField.getText().trim().replaceAll(" ", "+") + "+" + simpleTitleField.getText().trim().replaceAll(" ", "+") :
-						(ytTitle != null ? ytTitle.trim().replaceAll(" ", "+") : ""))));
+						interpretField.getText().trim().replaceAll("[\\s&]+", "+") + "+" + simpleTitleField.getText().trim().replaceAll(" ", "+") :
+						(ytTitle != null ? ytTitle.trim().replaceAll("[\\s&]+", "+") : ""))));
 			} catch(IOException | URISyntaxException ioException) {
 				ioException.printStackTrace();
 			}
@@ -302,18 +311,93 @@ public final class SongGUI {
 				});
 				if(yearField.getText().trim().isEmpty())
 					yearField.setText(ytUploadDate.substring(0, 4));
-				if(ytTitle.contains(" - ")) {
+
+				// some semi intelligent Interpret and Title processing
+				String futureInterpret, futureTitle;
+				ytTitle = ytTitle.replaceAll("–", "-"); // first dash is an em-dash
+				if(ytTitle.contains(" - ")) { // ytTitle format: interpret - title
 					String[] splitTitle = ytTitle.split(" - ", 2);
-					if(interpretField.getText().trim().isEmpty())
-						interpretField.setText(splitTitle[0]);
-					if(simpleTitleField.getText().trim().isEmpty())
-						simpleTitleField.setText(splitTitle[1]);
-				} else {
-					if(interpretField.getText().trim().isEmpty())
-						interpretField.setText(json.getString("uploader"));
-					if(simpleTitleField.getText().trim().isEmpty())
-						simpleTitleField.setText(ytTitle);
+					futureInterpret = splitTitle[0];
+					futureTitle = splitTitle[1];
+				} else { // else use yt uploader and whole ytTitle
+					futureInterpret = json.getString("uploader").replaceAll("\\s+[-–]\\s+((Topic)|(Thema))\\s*$", "");
+					/**
+					 * Regex explanation for "\\s+[-–]\\s+((Topic)|(Thema))\\s*$"
+					 * \\s+ one or more whitespaces
+					 * [-–] (class of) dash or em-dash. So basically one of those characters follows
+					 * \\s+ one or more whitespaces
+					 * ((Topic)|(Thema)) "Topic" or "Thema" follows
+					 * \\s* zero or more whitespaces at the
+					 * $ END OF STRING
+					 */
+					futureTitle = ytTitle;
 				}
+				Function<String, String> removeAppendices = (in) -> {
+					String[] appendicesVideo = in
+						.split("(?i)\\s+[(\\[]?((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyric))*Video(clip)?((\\s)|(HD)|(4K))*[)\\]]?\\s*$");
+					/**
+					 * Regex explanation for "(?i)\\s+[(\\[]?((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyric))*Video(clip)?((\\s)|(HD)|(4K))*[)\\]]?\\s*$"
+					 * (?i) regex is case-insensitive
+					 * \\s+ one or more whitespaces
+					 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
+					 * ((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyric))* class of whitespace, "Official", "HD", "4K", "Music" and "Lyric". * means those words occur zero or more times
+					 * Video mandatory
+					 * (clip)? maybe its Videoclip
+					 * ((\\s)|(HD)|(4K))* class of whitespace, "HD" and "4K". * means those words occur zero or more times
+					 * [)\\]]? optional class of ")" and "]". So basically maybe the word is in braces
+					 * \\s* zero or more whitespaces at the
+					 * $ END OF STRING
+					 */
+					in = appendicesVideo[0];
+					String[] appendicesLyrics = in.split("(?i)\\s+[(\\[]?(with\\s+)?Lyrics(\\s+on\\s+screen)?[)\\]]?\\s*$");
+					/**
+					 * Regex explanation for "(?i)\\s+[(\\[]?(with\\s*)?Lyrics(\\s+on\\s+screen)?[)\\]]?\\s*$"
+					 * (?i) regex is case-insensitive
+					 * \\s+ one or more whitespaces
+					 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
+					 * (with\\s+)? maybe "with" stands (with one or more whitespaces) before
+					 * Lyrics mandatory
+					 * (\\s+on\\s+screen)? maybe its followed by "on screen"
+					 * [)\\]]? optional class of ")" and "]". So basically maybe the word is in braces
+					 * \\s* zero or more whitespaces at the
+					 * $ END OF STRING
+					 */
+					in = appendicesLyrics[0];
+					return in;
+				};
+				futureTitle = removeAppendices
+					.apply(futureTitle); // searching for ftInterprets in the middle of a String is hard, so let's first try to remove the appendices
+				String[] ftInterprets = futureTitle.split("(?i)\\s+[(\\[]?f(ea)?t\\.?\\s+"); // then check for ft Interprets
+				/**
+				 * Regex explanation for "(?i)\\s+[(\\[]?f(ea)?t\\.?\\s+"
+				 * (?i) regex is case-insensitive
+				 * \\s+ one or more whitespaces
+				 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
+				 * f(ea)?t mandatory ft, but maybe "ea" is inbetween, so ft or feat
+				 * \\.? maybe theres a "." afterwards
+				 * \\s+ one or more whitespaces
+				 * the regex has ended without closing braces. This is because now the interpret follows. The (optional) ending braces will be removed later
+				 */
+				if(ftInterprets.length > 1 && !ftInterprets[1].isEmpty()) {
+					futureTitle = ftInterprets[0];
+					futureInterpret = futureInterpret + ", " + ftInterprets[1].replaceAll("\\s*[)\\]]\\s*$", "");
+					/**
+					 * Regex explanation for "\\s*[)\\]]\\s*$"
+					 * \\s* zero or more whitespaces
+					 * [)\\]] class of ending braces
+					 * \\s* one or more whitespaces before
+					 * $ END OF THE STRING
+					 *
+					 * (Optional) ending braces of a ft. Interpret are removed
+					 */
+				}
+				futureTitle = removeAppendices.apply(
+					futureTitle); // and if the Interprets were actually at the end, we can remove the appendices now, since the new string has the appendices at the end
+				if(interpretField.getText().trim().isEmpty())
+					interpretField.setText(futureInterpret.trim());
+				if(simpleTitleField.getText().trim().isEmpty())
+					simpleTitleField.setText(futureTitle.trim());
+
 				duplicatesListener.insertUpdate(null); // call to check for duplicates
 			} catch(IOException e) {
 				e.printStackTrace();

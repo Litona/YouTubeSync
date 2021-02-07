@@ -253,7 +253,9 @@
             <children>
               <component id="d44c" class="javax.swing.JTable" binding="duplicatesTable" custom-create="true">
                 <constraints/>
-                <properties/>
+                <properties>
+                  <foreground color="-65536"/>
+                </properties>
               </component>
             </children>
           </scrollpane>

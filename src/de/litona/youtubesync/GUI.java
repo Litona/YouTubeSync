@@ -35,7 +35,7 @@ public final class GUI extends JFrame {
 			return !contains(o) && super.add(o);
 		}
 	};
-	static List<SynchedSong> songs = new ArrayList<>(1500);
+	static List<SynchedSong> songs = Collections.emptyList();
 	static final Map<String, String> ytPlaylistSources = new ConcurrentHashMap<>();
 	private static File songsFolder;
 	private static boolean changesToSongs = false;
@@ -64,8 +64,10 @@ public final class GUI extends JFrame {
 		}
 		// Deserializing Songs
 		try(Stream<String> songsJsonStream = Files.lines(songsFile.toPath(), StandardCharsets.UTF_8)) {
-			new JSONObject(songsJsonStream.collect(Collectors.joining(" "))).getJSONArray("songs")
-				.forEach(j -> songs.add(new SynchedSong((JSONObject) j)));
+			JSONArray array = new JSONObject(songsJsonStream.collect(Collectors.joining(" "))).getJSONArray("songs");
+			songs = new ArrayList<>(array.length());
+			for(int i = 0; i < array.length(); i++)
+				songs.add(new SynchedSong(array.getJSONObject(i)));
 		} catch(IOException e) {
 			System.out.println("No Songs File");
 			e.printStackTrace();
@@ -147,6 +149,27 @@ public final class GUI extends JFrame {
 
 	private GUI() {
 		//just for testing purposes
+		/*
+		System.out.println("start");
+		AtomicInteger ites = new AtomicInteger(0);
+		System.out.println(songs.parallelStream().mapToLong(s -> {
+			try {
+				System.out.println(ites.incrementAndGet());
+				Mp3File mp3File = new Mp3File(s.getFile());
+				long l = mp3File.getLengthInSeconds();
+				if(l < 960)
+					return l;
+			} catch(IOException e) {
+				e.printStackTrace();
+			} catch(UnsupportedTagException e) {
+				e.printStackTrace();
+			} catch(InvalidDataException e) {
+				e.printStackTrace();
+			}
+			return 0;
+		}).sum() + "sek");
+		System.out.println("end");
+
 		class Occurrence {
 			String firstInterpret;
 			Collection<String> others = new HashSet<>();
@@ -175,6 +198,32 @@ public final class GUI extends JFrame {
 			}
 		});
 		occurrences.entrySet().stream().sorted(Map.Entry.comparingByValue()).forEach(e -> System.out.println(e.getKey() + "	" + e.getValue()));
+
+		try {
+			SynchedSong test = songs.get(2);
+			Mp3File mp3File = new Mp3File(test.getFile());
+			ID3v2 tag;
+			if(mp3File.hasId3v2Tag())
+				tag = mp3File.getId3v2Tag();
+			else
+				mp3File.setId3v2Tag(tag = new ID3v24Tag());
+			tag.setArtist(test.getInterpret());
+			tag.setTitle(test.getSimpleTitle());
+			tag.setYear(test.getYear());
+			tag.setGenreDescription(String.join(", ", test.getTags()));
+			tag.setUrl(test.getYtId());
+			mp3File.save("D:\\test.mp3");
+		} catch(UnsupportedTagException e) {
+			e.printStackTrace();
+		} catch(IOException e) {
+			e.printStackTrace();
+		} catch(InvalidDataException e) {
+			e.printStackTrace();
+		} catch(NotSupportedException e) {
+			e.printStackTrace();
+		}
+		*/
+		//testing ends
 
 		songs = new CopyOnWriteArrayList<>(songs);
 		this.addWindowListener(new WindowAdapter() {
@@ -302,7 +351,9 @@ public final class GUI extends JFrame {
 				SongTagFilter<Object, Object> tagFilter = strictModeField.isSelected() ?
 					new StrictSongTagFilter<>(searchTagsField.getText()) :
 					new SongTagFilter<>(searchTagsField.getText());
-				songlistSorter.setRowFilter(RowFilter.andFilter(Arrays.asList(new SimpleSearchFilter<>(searchElseField.getText()), tagFilter)));
+				songlistSorter.setRowFilter(RowFilter.andFilter(Arrays.asList(RowFilter.orFilter(
+					Arrays.asList(new SimpleSearchTitleFilter<>(searchElseField.getText()), new SimpleSearchInterpretFilter<>(searchElseField.getText()))),
+					tagFilter)));
 				countLabel.setText(songlistTable.getRowCount() + " songs found with following tags:");
 				((DefaultListModel<String>) tagsList.getModel()).removeAllElements();
 				tagFilter.getResults().stream().map(SynchedSong::getTags).flatMap(Collection::stream).distinct()
@@ -454,6 +505,9 @@ public final class GUI extends JFrame {
 			fc.setDragEnabled(false);
 			fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
 			if(fc.showOpenDialog(fc) == JFileChooser.APPROVE_OPTION) {
+				progressBar.setValue(0);
+				progressBar.setString("Exporting songs...");
+				progressBar.setMaximum(songlistTable.getSelectedRowCount());
 				File fcDir = fc.getSelectedFile();
 				File fcDirJson = new File(fcDir, "songs.json");
 				Collection<SynchedSong> fcDirSongs = new TreeSet<>();
@@ -473,6 +527,7 @@ public final class GUI extends JFrame {
 				JSONArray array = new JSONArray();
 				for(int i : songlistTable.getSelectedRows())
 					try {
+						progressBar.setValue(progressBar.getValue() + 1);
 						SynchedSong toCopy = songs.get(songlistTable.convertRowIndexToModel(i));
 						array.put(toCopy.toJson(true));
 						if(!fcDirSongs.contains(toCopy))
@@ -488,6 +543,8 @@ public final class GUI extends JFrame {
 				} catch(FileNotFoundException e1) {
 					e1.printStackTrace();
 				}
+				progressBar.setString("Finished export!");
+				progressBar.setValue(progressBar.getMaximum());
 			}
 		});
 
