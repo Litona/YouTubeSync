@@ -23,7 +23,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class GUI extends JFrame {
-	// TODO: XXDelete, aBetterAudio und vorherige Songs, dance und vorherige, rap und hiphop -> party
 
 	private static final File configurationFile = new File(System.getenv("APPDATA") + "//Litona//YouTubeSync//configuration.json");
 	private static final File songsFile = new File(System.getenv("APPDATA") + "//Litona//YouTubeSync//songs.json");
@@ -463,7 +462,7 @@ public final class GUI extends JFrame {
 		});
 		classifyButton.addActionListener(e -> {
 			new Thread(() -> {
-				Queue<SynchedSong> songsToClassify = songs.stream().filter(s -> s.getClassificationLevel() < 2)
+				Queue<SynchedSong> songsToClassify = songs.stream().filter(s -> s.getClassificationLevel() < 2 && s.getAdded() < 1600184826488l)
 					.collect(Collectors.toCollection(LinkedList::new));
 				if(!songsToClassify.isEmpty()) {
 					SongGUI openGui;
@@ -511,7 +510,7 @@ public final class GUI extends JFrame {
 				File fcDir = fc.getSelectedFile();
 				File fcDirJson = new File(fcDir, "songs.json");
 				Collection<SynchedSong> fcDirSongs = new TreeSet<>();
-				if(fcDirJson.exists()) {
+				if(fcDirJson.exists())
 					try(Stream<String> songsJsonStream = Files.lines(fcDirJson.toPath(), StandardCharsets.UTF_8)) {
 						JSONArray array = new JSONObject(songsJsonStream.collect(Collectors.joining(" "))).getJSONArray("songs");
 						for(int i = 0; i < array.length(); i++)
@@ -520,31 +519,42 @@ public final class GUI extends JFrame {
 						System.out.println("No fcSongs File");
 						e2.printStackTrace();
 					}
-				}
 
 				// Serializing songs
 				JSONObject json = new JSONObject();
 				JSONArray array = new JSONArray();
+				Collection<SynchedSong> copyList = new HashSet<>();
 				for(int i : songlistTable.getSelectedRows())
 					try {
-						progressBar.setValue(progressBar.getValue() + 1);
 						SynchedSong toCopy = songs.get(songlistTable.convertRowIndexToModel(i));
 						array.put(toCopy.toJson(true));
 						if(!fcDirSongs.contains(toCopy))
-							Files.copy(toCopy.getFile().toPath(), new File(fcDir, toCopy.getFile().getName()).toPath());
+							copyList.add(toCopy);
 					} catch(IOException ioException) {
 						ioException.printStackTrace();
 					}
 				json.put("songs", array);
-				System.out.println("Writing export songs file");
+				AtomicInteger integer = new AtomicInteger();
+				new Thread(() -> {
+					copyList.parallelStream().forEach(toCopy -> {
+						try {
+							progressBar.setValue(integer.incrementAndGet());
+							Files.copy(toCopy.getFile().toPath(), new File(fcDir, toCopy.getFile().getName()).toPath());
+						} catch(IOException ioException) {
+							ioException.printStackTrace();
+						}
+					});
+					progressBar.setString("Finished export!");
+					progressBar.setValue(progressBar.getMaximum());
+					System.out.println("Export finished");
+				}).start();
+				System.out.println("Writing export songs file, songs are BEING copied");
 				try(PrintWriter out = new PrintWriter(
 					new OutputStreamWriter(new FileOutputStream(new File(fcDir, "songs.json")), StandardCharsets.UTF_8))) {
 					out.println(json.toString());
 				} catch(FileNotFoundException e1) {
 					e1.printStackTrace();
 				}
-				progressBar.setString("Finished export!");
-				progressBar.setValue(progressBar.getMaximum());
 			}
 		});
 
