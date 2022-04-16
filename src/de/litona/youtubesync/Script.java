@@ -10,8 +10,8 @@ public final class Script {
 	private static int newIndexOnline = 1;
 
 	public static void main(String... args) {
-		System.out.println("YouTubeSync in " + System.getProperty("user.dir"));
-		for(File plDirs : new File(System.getProperty("user.dir")).listFiles())
+		System.out.println("YouTubeSync in " + new File("D:\\Playlists"));
+		for(File plDirs : new File("D:\\Playlists").listFiles())
 			if(plDirs.isDirectory()) {
 				String url = "";
 				int lastIndexSaved = 0;
@@ -32,7 +32,7 @@ public final class Script {
 						new InputStreamReader(Runtime.getRuntime().exec("youtube-dl " + url + " -j --flat-playlist").getInputStream()))) {
 						reader.lines().map(s -> s.split("\"id\": \"")[1].substring(0, 11)).filter(savedEntries::contains).forEach(s -> newIndexOnline++);
 						System.out.println("Next index online: " + newIndexOnline + "; Next index on disk: " + ++lastIndexSaved);
-						if(newIndexOnline > 0)
+						if(newIndexOnline >= 0)
 							new ProcessBuilder("youtube-dl", url, "-o", "\"" + plDirs.getName() + "\\%(autonumber)s#%(title)s.%(id)s.%(ext)s\"", "-x",
 								"--audio-format", "mp3", "--restrict-filenames", "--playlist-start", newIndexOnline + "", "--autonumber-start",
 								lastIndexSaved + "", "--exec", "\"mp3gain -r -c {}\"").inheritIO().start().waitFor();

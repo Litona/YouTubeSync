@@ -58,7 +58,7 @@ public final class SongGUI {
 
 	public SongGUI() {
 		frame = new JFrame();
-		frame.setSize(1200, 460);
+		frame.setSize(1200, 500);
 		frame.setTitle("YouTubeSync: Specify Song");
 		frame.setContentPane(basePanel);
 		frame.addWindowListener(new WindowAdapter() {
@@ -347,7 +347,7 @@ public final class SongGUI {
 	SongGUI(PreSynchedSong preSong, int numberOfSongs, int indexOfSongs) {
 		this();
 		urlField.setText("https://www.youtube.com/watch?v=" + preSong.getYtId());
-		tagsField.setText(" " + String.join(" ", preSong.getTags()) + " ");
+		tagsField.setText(" " + String.join("  ", preSong.getTags()) + " ");
 		updateTagsList();
 		progressBar1.setMaximum(numberOfSongs);
 		progressBar1.setValue(indexOfSongs + 1);
@@ -386,16 +386,6 @@ public final class SongGUI {
 	}
 
 	void tmp() {
-		if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
-			try {
-				Desktop.getDesktop().browse(new URI("https://www.google.com/search?q=" + (
-					interpretField.getText() != null && !interpretField.getText().isEmpty() && simpleTitleField.getText() != null && !simpleTitleField
-						.getText().isEmpty() ?
-						interpretField.getText().trim().replaceAll("[\\s&]+", "+") + "+" + simpleTitleField.getText().trim().replaceAll(" ", "+") :
-						(ytTitle != null ? ytTitle.trim().replaceAll("[\\s&]+", "+") : ""))));
-			} catch(IOException | URISyntaxException ioException) {
-				ioException.printStackTrace();
-			}
 		if(new File("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe").exists()) {
 			File tmp = new File(System.getProperty("user.dir"), "tmpVLCstart" + System.currentTimeMillis() + ".bat");
 			try {

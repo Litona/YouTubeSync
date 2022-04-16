@@ -20,6 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public final class GUI extends JFrame {
@@ -149,6 +150,19 @@ public final class GUI extends JFrame {
 	private GUI() {
 		//just for testing purposes
 		/*
+		Collection<String> already = new HashSet<>();
+		songs.forEach(one -> {
+			songs.forEach(s -> {
+				if(!one.ytId.equals(s.getYtId()) && !already.contains(one.getYtId() + s.getYtId())) {
+					double per = Math.round(s.similarTo(one) * 1000d) / 10d;
+					if(per > 70) {
+						already.add(s.getYtId() + one.getYtId());
+						System.out.println(
+							per + "% " + one.getInterpret() + " - " + one.getSimpleTitle() + " ### " + s.getInterpret() + " - " + s.getSimpleTitle());
+					}
+				}
+			});
+		});
 		System.out.println("start");
 		AtomicInteger ites = new AtomicInteger(0);
 		System.out.println(songs.parallelStream().mapToLong(s -> {
@@ -388,12 +402,11 @@ public final class GUI extends JFrame {
 		});
 
 		new Thread(() -> {
-			AtomicInteger threadIndex = new AtomicInteger();
-			songs.forEach(s -> {
-				ImageIcon thumbnail = s.getScaledThumbnail();
+			// Generate a stream of sequential integers; then parallely iterate over it to set the Thumbnail for each indexed song
+			IntStream.range(0, songlistTable.getModel().getRowCount()).boxed().parallel().forEach(i -> {
+				ImageIcon thumbnail = songs.get(i).getScaledThumbnail();
 				if(thumbnail != null && setThumbnails)
-					songlistTable.getModel().setValueAt(thumbnail, threadIndex.get(), 1);
-				threadIndex.incrementAndGet();
+					songlistTable.getModel().setValueAt(thumbnail, i, 1);
 			});
 		}).start();
 
@@ -462,8 +475,9 @@ public final class GUI extends JFrame {
 		});
 		classifyButton.addActionListener(e -> {
 			new Thread(() -> {
-				Queue<SynchedSong> songsToClassify = songs.stream().filter(s -> s.getClassificationLevel() < 2 && s.getAdded() < 1600184826488l)
-					.collect(Collectors.toCollection(LinkedList::new));
+				Queue<SynchedSong> songsToClassify = songs.stream().filter(
+					s -> s.getClassificationLevel() < 4 && (s.getTags().contains("Pop") || s.getTags().contains("Rock")) && !s.getTags().contains("XMAS")
+						&& !s.getTags().contains("Oldies") && s.getAdded() < 1615486751913l).collect(Collectors.toCollection(LinkedList::new));
 				if(!songsToClassify.isEmpty()) {
 					SongGUI openGui;
 					SongGUI nextGui;
@@ -490,12 +504,32 @@ public final class GUI extends JFrame {
 			@Override
 			public void mousePressed(MouseEvent e) {
 				if(e.getClickCount() == 2) {
-					SynchedSong selected = songs.get(songlistTable.convertRowIndexToModel(songlistTable.getSelectedRow()));
-					new Thread(() -> {
-						SongGUI cGui = new SongGUI(selected, 1, 1);
-						cGui.frame.setVisible(true);
-						successClassifyGui(cGui);
-					}).start();
+					if(SwingUtilities.isRightMouseButton(e)) {
+						SynchedSong selected = songs.get(songlistTable.convertRowIndexToModel(songlistTable.getSelectedRow()));
+						new Thread(() -> {
+							SongGUI cGui = new SongGUI(selected, 1, 1);
+							cGui.frame.setVisible(true);
+							successClassifyGui(cGui);
+						}).start();
+					} else if(SwingUtilities.isLeftMouseButton(e)) {
+						if(new File("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe").exists()) {
+							File tmp = new File(System.getProperty("user.dir"), "tmpVLCstart" + System.currentTimeMillis() + ".bat");
+							try {
+								try(PrintWriter out = new PrintWriter(tmp)) {
+									for(int i : songlistTable.getSelectedRows())
+										out.println(
+											"start \"C:\\Program Files\\VideoLAN\\VLC\\vlc.exe\" \"" + songs.get(songlistTable.convertRowIndexToModel(i))
+												.getFile().getPath() + "\"");
+								}
+								new ProcessBuilder(tmp.getPath()).inheritIO().start().waitFor();
+							} catch(IOException | InterruptedException exception) {
+								exception.printStackTrace();
+							} finally {
+								tmp.delete();
+							}
+						} else
+							System.out.println("VLC not installed!");
+					}
 				}
 			}
 		});
@@ -581,7 +615,7 @@ public final class GUI extends JFrame {
 			SynchedSong classifiedSong = gui.updateSynchedSong(); // finish user information and download song
 			if(classifiedSong == null) // means user has cancelled synching songs
 				return false;
-			classifiedSong.setClassificationLevel(2);
+			classifiedSong.setClassificationLevel(4);
 			changesToSongs = true;
 			int row = songs.indexOf(classifiedSong);
 			Object[] data = classifiedSong.getJTableData(row + 1, true);
