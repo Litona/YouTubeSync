@@ -28,33 +28,24 @@ public final class SongGUI {
 
 	public final JFrame frame;
 	private JPanel basePanel;
-	private JTextField urlField;
-	private JLabel ytTitleLabel;
-	private JTextField tagsField;
-	private JTextField interpretField;
-	private JTextField simpleTitleField;
-	private JTextField yearField;
+	private JTextField urlField, tagsField, interpretField, simpleTitleField, yearField;
+	private JLabel ytTitleLabel, yearLabel;
 	private JProgressBar progressBar1;
-	private JButton okButton;
+	private JButton okButton, cancelButton;
 	private JList<String> tagsList;
-	private JButton cancelButton;
-	private JLabel yearLabel;
 	private JScrollPane existingTagsPane;
 	private JSpinner duplicatesSpinner;
 	private JSlider duplicatesSlider;
 	private JTable duplicatesTable;
+	private JButton retryThumbnailButton;
 	private JPanel existingTagsPanel = new JPanel(new GridLayout(0, 7));
 
 	private DocumentListener duplicatesListener;
 	TableRowSorter<DefaultTableModel> duplicatesSorter;
 
-	private String ytId;
-	private String ytTitle;
-	private String ytUploadDate;
+	private String ytId, ytTitle, ytUploadDate;
 	private SynchedSong existingSong;
-	private boolean cancel = false;
-	private boolean ok = false;
-	private boolean skip = false;
+	private boolean cancel, ok, skip;
 
 	public SongGUI() {
 		frame = new JFrame();
@@ -134,139 +125,145 @@ public final class SongGUI {
 
 			private void urlFound() {
 				String url = urlField.getText().trim();
-				if(url.toLowerCase().contains("youtube.com/watch?v="))
-					try(BufferedReader reader = new BufferedReader(
-						new InputStreamReader(new ProcessBuilder("youtube-dl", url, "--dump-json", "--age-limit", "99").start().getInputStream()))) {
-						JSONObject json = new JSONObject(reader.lines().collect(Collectors.joining(" ")));
-						ytId = json.getString("id");
-						ytTitle = json.getString("title");
-						ytUploadDate = json.getString("upload_date");
-						ytTitleLabel.setText("Title found: " + ytTitle);
-						Stream.of(ytTitleLabel.getMouseListeners()).forEach(ytTitleLabel::removeMouseListener);
-						ytTitleLabel.addMouseListener(new MouseAdapter() {
-							@Override
-							public void mouseReleased(MouseEvent e) {
-								if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
-									try {
-										Desktop.getDesktop().browse(new URI(url));
-									} catch(IOException | URISyntaxException ioException) {
-										ioException.printStackTrace();
-									}
+				if(url.toLowerCase().contains("youtube.com/watch?v=")) {
+					try {
+						Process p = Runtime.getRuntime().exec("yt-dlp " + url + " --dump-json --age-limit 99");
+						try(BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+							JSONObject json = new JSONObject(reader.lines().collect(Collectors.joining(" ")));
+							ytId = json.getString("id");
+							ytTitle = json.getString("title");
+							ytUploadDate = json.getString("upload_date");
+							ytTitleLabel.setText("Title found: " + ytTitle);
+							Stream.of(ytTitleLabel.getMouseListeners()).forEach(ytTitleLabel::removeMouseListener);
+							ytTitleLabel.addMouseListener(new MouseAdapter() {
+								@Override
+								public void mouseReleased(MouseEvent e) {
+									if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
+										try {
+											Desktop.getDesktop().browse(new URI(url));
+										} catch(IOException | URISyntaxException ioException) {
+											ioException.printStackTrace();
+										}
+								}
+							});
+							if(yearField.getText().trim().isEmpty())
+								yearField.setText(ytUploadDate.substring(0, 4));
+
+							// regex Interpret and Title processing
+							String futureInterpret, futureTitle;
+							ytTitle = ytTitle.replaceAll("–", "-"); // first dash is a so called "em-dash"
+							if(ytTitle.contains(" - ")) { // ytTitle format: interpret - title
+								String[] splitTitle = ytTitle.split(" - ", 2);
+								futureInterpret = splitTitle[0];
+								futureTitle = splitTitle[1];
+							} else { // else use yt uploader and whole ytTitle
+								futureInterpret = json.getString("uploader").replaceAll("\\s+[-–]\\s+((Topic)|(Thema))\\s*$", "");
+								/**
+								 * Regex explanation for "\\s+[-–]\\s+((Topic)|(Thema))\\s*$"
+								 * \\s+ one or more whitespaces
+								 * [-–] (class of) dash or em-dash. So basically one of those characters follows
+								 * \\s+ one or more whitespaces
+								 * ((Topic)|(Thema)) "Topic" or "Thema" follows
+								 * \\s* zero or more whitespaces at the
+								 * $ END OF STRING
+								 */
+								futureTitle = ytTitle;
 							}
-						});
-						if(yearField.getText().trim().isEmpty())
-							yearField.setText(ytUploadDate.substring(0, 4));
-
-						// regex Interpret and Title processing
-						String futureInterpret, futureTitle;
-						ytTitle = ytTitle.replaceAll("–", "-"); // first dash is a so called "em-dash"
-						if(ytTitle.contains(" - ")) { // ytTitle format: interpret - title
-							String[] splitTitle = ytTitle.split(" - ", 2);
-							futureInterpret = splitTitle[0];
-							futureTitle = splitTitle[1];
-						} else { // else use yt uploader and whole ytTitle
-							futureInterpret = json.getString("uploader").replaceAll("\\s+[-–]\\s+((Topic)|(Thema))\\s*$", "");
+							Function<String, String> removeAppendices = (in) -> {
+								String[] appendicesVideo = in
+									.split("(?i)\\s+[(\\[]?((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyrics?))*Video(clip)?((\\s)|(HD)|(4K))*[)\\]]?\\s*$");
+								/**
+								 * Regex explanation for "(?i)\\s+[(\\[]?((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyric))*Video(clip)?((\\s)|(HD)|(4K))*[)\\]]?\\s*$"
+								 * (?i) regex is case-insensitive
+								 * \\s+ one or more whitespaces
+								 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
+								 * ((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyrics?))* class of whitespace, "Official", "HD", "4K", "Music" and "Lyric" or "Lyric*s*". * means those words occur zero or more times
+								 * Video mandatory
+								 * (clip)? maybe its Videoclip
+								 * ((\\s)|(HD)|(4K))* class of whitespace, "HD" and "4K". * means those words occur zero or more times
+								 * [)\\]]? optional class of ")" and "]". So basically maybe the word is in braces
+								 * \\s* zero or more whitespaces at the
+								 * $ END OF STRING
+								 */
+								in = appendicesVideo[0];
+								String[] appendicesLyrics = in.split("(?i)\\s+[(\\[]?\\s*(with\\s+)?Lyrics(\\s+on\\s+screen)?\\s*[)\\]]?\\s*$");
+								/**
+								 * Regex explanation for "(?i)\\s+[(\\[]?(with\\s*)?Lyrics(\\s+on\\s+screen)?[)\\]]?\\s*$"
+								 * (?i) regex is case-insensitive
+								 * \\s+ one or more whitespaces
+								 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
+								 * \\s* zero or more whitespaces
+								 * (with\\s+)? maybe "with" stands (with one or more whitespaces) before
+								 * Lyrics mandatory
+								 * (\\s+on\\s+screen)? maybe its followed by "on screen"
+								 * \\s* zero or more whitespaces
+								 * [)\\]]? optional class of ")" and "]". So basically maybe the word is in braces
+								 * \\s* zero or more whitespaces at the
+								 * $ END OF STRING
+								 */
+								in = appendicesLyrics[0];
+								String[] appendicesAudio = in.split("(?i)\\s+[(\\[]\\s*(Official\\s*)?Audio\\s*[)\\]]\\s*$");
+								/**
+								 * Regex explanation for "(?i)\\s+[(\\[]\\s*(Official\\s*)?Audio\\s*[)\\]]\\s*$"
+								 * (?i) regex is case-insensitive
+								 * \\s+ one or more whitespaces
+								 * [(\\[] mandatory class of "(" and "[". So there MUST be "(" or "["
+								 * \\s* zero or more whitespaces
+								 * (Official\\s*)? Optional "Official" and zero or more whitespaces
+								 * Audio mandatory
+								 * \\s* zero or more whitespaces
+								 * [(\\]] mandatory class of ")" and "]". So there MUST be ")" or "]"
+								 * \\s* zero or more whitespaces at the
+								 * $ END OF STRING
+								 */
+								in = appendicesAudio[0];
+								return in;
+							};
+							futureTitle = removeAppendices.apply(
+								futureTitle); // searching for ftInterprets in the middle of a String is hard, so let's first try to remove the appendices
+							String[] ftInterprets = futureTitle.split("(?i)\\s+[(\\[]?f(ea)?t\\.?\\s+"); // then check for ft Interprets
 							/**
-							 * Regex explanation for "\\s+[-–]\\s+((Topic)|(Thema))\\s*$"
-							 * \\s+ one or more whitespaces
-							 * [-–] (class of) dash or em-dash. So basically one of those characters follows
-							 * \\s+ one or more whitespaces
-							 * ((Topic)|(Thema)) "Topic" or "Thema" follows
-							 * \\s* zero or more whitespaces at the
-							 * $ END OF STRING
-							 */
-							futureTitle = ytTitle;
-						}
-						Function<String, String> removeAppendices = (in) -> {
-							String[] appendicesVideo = in
-								.split("(?i)\\s+[(\\[]?((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyrics?))*Video(clip)?((\\s)|(HD)|(4K))*[)\\]]?\\s*$");
-							/**
-							 * Regex explanation for "(?i)\\s+[(\\[]?((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyric))*Video(clip)?((\\s)|(HD)|(4K))*[)\\]]?\\s*$"
+							 * Regex explanation for "(?i)\\s+[(\\[]?f(ea)?t\\.?\\s+"
 							 * (?i) regex is case-insensitive
 							 * \\s+ one or more whitespaces
 							 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
-							 * ((\\s)|(Official)|(HD)|(4K)|(Music)|(Lyrics?))* class of whitespace, "Official", "HD", "4K", "Music" and "Lyric" or "Lyric*s*". * means those words occur zero or more times
-							 * Video mandatory
-							 * (clip)? maybe its Videoclip
-							 * ((\\s)|(HD)|(4K))* class of whitespace, "HD" and "4K". * means those words occur zero or more times
-							 * [)\\]]? optional class of ")" and "]". So basically maybe the word is in braces
-							 * \\s* zero or more whitespaces at the
-							 * $ END OF STRING
-							 */
-							in = appendicesVideo[0];
-							String[] appendicesLyrics = in.split("(?i)\\s+[(\\[]?\\s*(with\\s+)?Lyrics(\\s+on\\s+screen)?\\s*[)\\]]?\\s*$");
-							/**
-							 * Regex explanation for "(?i)\\s+[(\\[]?(with\\s*)?Lyrics(\\s+on\\s+screen)?[)\\]]?\\s*$"
-							 * (?i) regex is case-insensitive
+							 * f(ea)?t mandatory ft, but maybe "ea" is inbetween, so ft or feat
+							 * \\.? maybe theres a "." afterwards
 							 * \\s+ one or more whitespaces
-							 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
-							 * \\s* zero or more whitespaces
-							 * (with\\s+)? maybe "with" stands (with one or more whitespaces) before
-							 * Lyrics mandatory
-							 * (\\s+on\\s+screen)? maybe its followed by "on screen"
-							 * \\s* zero or more whitespaces
-							 * [)\\]]? optional class of ")" and "]". So basically maybe the word is in braces
-							 * \\s* zero or more whitespaces at the
-							 * $ END OF STRING
+							 * the regex has ended without closing braces. This is because now the interpret follows. The (optional) ending braces will be removed later
 							 */
-							in = appendicesLyrics[0];
-							String[] appendicesAudio = in.split("(?i)\\s+[(\\[]\\s*(Official\\s*)?Audio\\s*[)\\]]\\s*$");
-							/**
-							 * Regex explanation for "(?i)\\s+[(\\[]\\s*(Official\\s*)?Audio\\s*[)\\]]\\s*$"
-							 * (?i) regex is case-insensitive
-							 * \\s+ one or more whitespaces
-							 * [(\\[] mandatory class of "(" and "[". So there MUST be "(" or "["
-							 * \\s* zero or more whitespaces
-							 * (Official\\s*)? Optional "Official" and zero or more whitespaces
-							 * Audio mandatory
-							 * \\s* zero or more whitespaces
-							 * [(\\]] mandatory class of ")" and "]". So there MUST be ")" or "]"
-							 * \\s* zero or more whitespaces at the
-							 * $ END OF STRING
-							 */
-							in = appendicesAudio[0];
-							return in;
-						};
-						futureTitle = removeAppendices.apply(
-							futureTitle); // searching for ftInterprets in the middle of a String is hard, so let's first try to remove the appendices
-						String[] ftInterprets = futureTitle.split("(?i)\\s+[(\\[]?f(ea)?t\\.?\\s+"); // then check for ft Interprets
-						/**
-						 * Regex explanation for "(?i)\\s+[(\\[]?f(ea)?t\\.?\\s+"
-						 * (?i) regex is case-insensitive
-						 * \\s+ one or more whitespaces
-						 * [(\\[]? optional class of "(" and "[". So maybe there's "(" or "["
-						 * f(ea)?t mandatory ft, but maybe "ea" is inbetween, so ft or feat
-						 * \\.? maybe theres a "." afterwards
-						 * \\s+ one or more whitespaces
-						 * the regex has ended without closing braces. This is because now the interpret follows. The (optional) ending braces will be removed later
-						 */
-						if(ftInterprets.length > 1 && !ftInterprets[1].isEmpty()) {
-							futureTitle = ftInterprets[0];
-							futureInterpret = futureInterpret + ", " + ftInterprets[1].replaceAll("\\s*[)\\]]\\s*$", "");
-							/**
-							 * Regex explanation for "\\s*[)\\]]\\s*$"
-							 * \\s* zero or more whitespaces
-							 * [)\\]] class of ending braces
-							 * \\s* one or more whitespaces before
-							 * $ END OF THE STRING
-							 *
-							 * (Optional) ending braces of a ft. Interpret are removed
-							 */
-						}
-						futureTitle = removeAppendices.apply(
-							futureTitle); // and if the Interprets were actually at the end, we can remove the appendices now, since the new string has the appendices at the end
-						if(interpretField.getText().trim().isEmpty())
-							interpretField.setText(futureInterpret.trim());
-						if(simpleTitleField.getText().trim().isEmpty())
-							simpleTitleField.setText(futureTitle.trim());
+							if(ftInterprets.length > 1 && !ftInterprets[1].isEmpty()) {
+								futureTitle = ftInterprets[0];
+								futureInterpret = futureInterpret + ", " + ftInterprets[1].replaceAll("\\s*[)\\]]\\s*$", "");
+								/**
+								 * Regex explanation for "\\s*[)\\]]\\s*$"
+								 * \\s* zero or more whitespaces
+								 * [)\\]] class of ending braces
+								 * \\s* one or more whitespaces before
+								 * $ END OF THE STRING
+								 *
+								 * (Optional) ending braces of a ft. Interpret are removed
+								 */
+							}
+							futureTitle = removeAppendices.apply(
+								futureTitle); // and if the Interprets were actually at the end, we can remove the appendices now, since the new string has the appendices at the end
+							if(interpretField.getText().trim().isEmpty())
+								interpretField.setText(futureInterpret.trim());
+							if(simpleTitleField.getText().trim().isEmpty())
+								simpleTitleField.setText(futureTitle.trim());
 
-						duplicatesListener.insertUpdate(null); // call to check for duplicates
+							duplicatesListener.insertUpdate(null); // call to check for duplicates
+						} catch(IOException e) {
+							e.printStackTrace();
+						} catch(JSONException e) {
+							System.out.println(url + " no longer online");
+							ytId = url.split("watch\\?v=")[1].split("&")[0];
+							e.printStackTrace();
+						}
 					} catch(IOException e) {
 						e.printStackTrace();
-					} catch(JSONException e) {
-						System.out.println(url + " no longer online");
-						ytId = url.split("watch\\?v=")[1].split("&")[0];
 					}
+				}
 			}
 		});
 		yearLabel.addMouseListener(new MouseAdapter() {
@@ -367,6 +364,15 @@ public final class SongGUI {
 			interpretField.setText(existingSong.getInterpret());
 		if(existingSong.hasYear())
 			yearField.setText(existingSong.getYear());
+
+		if(!existingSong.hasThumbnail()) {
+			retryThumbnailButton.setVisible(true);
+			retryThumbnailButton.addActionListener(e -> {
+				retryThumbnailButton.setVisible(false);
+				existingSong.retryThumbnail();
+			});
+		}
+
 		frame.setTitle("YouTubeSync: Classify Song");
 		duplicatesListener.insertUpdate(null); // call for checking duplicates after title and interpret fill
 	}
@@ -458,7 +464,8 @@ public final class SongGUI {
 			throw new InterruptedException();
 		try {
 			return new SynchedSong(ytId, ytTitle, Arrays.asList(tagsField.getText().trim().split("\\s+").clone()), simpleTitleField.getText().trim(),
-				interpretField.getText().trim(), yearField.getText().trim(), ytUploadDate == null ? -1 : ytUploadDateFormat.parse(ytUploadDate).getTime());
+				interpretField.getText().trim(), yearField.getText().trim(), ytUploadDate == null ? -1 : ytUploadDateFormat.parse(ytUploadDate).getTime(),
+				false);
 		} catch(ParseException e) {
 			e.printStackTrace();
 			throw new InterruptedException("the show must go on; ignore Interrupted Exception and fix ParseException!");

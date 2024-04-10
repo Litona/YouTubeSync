@@ -3,9 +3,9 @@ package de.litona.youtubesync;
 import javax.swing.*;
 
 public final class AddSourceGUI extends JFrame {
+
 	private JPanel basePanel;
-	private JTextField nameField;
-	private JTextField urlField;
+	private JTextField nameField, urlField;
 	private JButton addSourceButton;
 
 	AddSourceGUI() {

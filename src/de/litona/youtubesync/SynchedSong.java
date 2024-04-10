@@ -18,11 +18,8 @@ public class SynchedSong extends PreSynchedSong implements Comparable<SynchedSon
 	private static final SimpleDateFormat yearDisplayFormat = new SimpleDateFormat("yyyy");
 
 	private File file;
-	private final long added;
-	private final long uploaded;
-	private String simpleTitle;
-	private String interpret;
-	private String year;
+	private final long added, uploaded;
+	private String simpleTitle, interpret, year;
 	private boolean hasThumbnail;
 	private ImageIcon scaledThumbnail;
 	private int classificationLevel = 0;
@@ -56,8 +53,8 @@ public class SynchedSong extends PreSynchedSong implements Comparable<SynchedSon
 			classificationLevel = json.getInt("classificationLevel");
 	}
 
-	public SynchedSong(String ytId, String ytTitle, Collection<String> tags, String simpleTitle, String interpret, String year, long uploaded)
-		throws FileNotFoundException {
+	public SynchedSong(String ytId, String ytTitle, Collection<String> tags, String simpleTitle, String interpret, String year, long uploaded,
+		boolean temp) throws FileNotFoundException {
 		super(ytId, ytTitle, tags);
 		this.added = System.currentTimeMillis();
 		this.uploaded = uploaded;
@@ -65,10 +62,10 @@ public class SynchedSong extends PreSynchedSong implements Comparable<SynchedSon
 		this.interpret = interpret;
 		this.year = year;
 		try {
-			new ProcessBuilder("youtube-dl", "https://www.youtube.com/watch?v=" + ytId, "-o",
-				"\"" + GUI.getSongsFolder().getPath() + "\\pre" + added + "#%(title)s.%(id)s.%(ext)s\"", "-x", "--audio-format", "mp3",
-				"--restrict-filenames", "--age-limit", "99", "--exec", "\"mp3gain -r -c {}\"").inheritIO().start().waitFor();
-			file = Arrays.stream(GUI.getSongsFolder().listFiles())
+			new ProcessBuilder("yt-dlp", "https://www.youtube.com/watch?v=" + ytId, "-o",
+				"\"" + (temp ? GUI.getTempFolder() : GUI.getSongsFolder()).getPath() + "\\pre" + added + "#%(title)s.%(id)s.%(ext)s\"", "-x",
+				"--audio-format", "mp3", "--restrict-filenames", "--age-limit", "99", "--exec", "\"mp3gain -r -c {}\"").inheritIO().start().waitFor();
+			file = Arrays.stream((temp ? GUI.getTempFolder() : GUI.getSongsFolder()).listFiles())
 				.filter(f -> f.getName().startsWith("pre" + added) && f.getName().endsWith(ytId + ".mp3")).findAny()
 				.orElseThrow(FileNotFoundException::new);
 			downloadThumbnail();
@@ -129,6 +126,10 @@ public class SynchedSong extends PreSynchedSong implements Comparable<SynchedSon
 		this.classificationLevel = classificationLevel;
 	}
 
+	public boolean hasThumbnail() {
+		return hasThumbnail;
+	}
+
 	public ImageIcon getThumbnail() {
 		if(hasThumbnail)
 			try {
@@ -138,6 +139,7 @@ public class SynchedSong extends PreSynchedSong implements Comparable<SynchedSon
 			} catch(IOException | UnsupportedTagException | InvalidDataException e) {
 				e.printStackTrace();
 			}
+		System.out.println(getYtId() + " has no Thumbnail");
 		return null;
 	}
 
@@ -147,13 +149,18 @@ public class SynchedSong extends PreSynchedSong implements Comparable<SynchedSon
 			null;
 	}
 
+	public void retryThumbnail() {
+		file.renameTo((file = new File(file.getParentFile(), "pre" + file.getName())));
+		downloadThumbnail();
+	}
+
 	private void downloadThumbnail() {
 		File downloadedThumbnail = new File(System.getProperty("user.dir"), ytId + ".jpeg");
 		File old = file;
 		File out = new File(file.getParentFile(), file.getName().substring(3));
 		try {
 			System.out.println("+++Searching Thumbnail for " + ytTitle + "." + ytId);
-			Process p = new ProcessBuilder("youtube-dl", "https://www.youtube.com/watch?v=" + ytId, "--get-thumbnail", "--age-limit", "99").start();
+			Process p = new ProcessBuilder("yt-dlp", "https://www.youtube.com/watch?v=" + ytId, "--get-thumbnail", "--age-limit", "99").start();
 			try(BufferedReader in = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
 				String line;
 				boolean first = true;

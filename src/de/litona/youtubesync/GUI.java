@@ -1,6 +1,8 @@
 package de.litona.youtubesync;
 
 import com.bulenkov.darcula.DarculaLaf;
+import javafx.embed.swing.JFXPanel;
+import javafx.scene.media.MediaPlayer;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -10,10 +12,14 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
+import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.text.ParseException;
+import java.util.List;
+import java.util.Queue;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -25,8 +31,8 @@ import java.util.stream.Stream;
 
 public final class GUI extends JFrame {
 
-	private static final File configurationFile = new File(System.getenv("APPDATA") + "//Litona//YouTubeSync//configuration.json");
-	private static final File songsFile = new File(System.getenv("APPDATA") + "//Litona//YouTubeSync//songs.json");
+	static final File configurationFile = new File(System.getenv("APPDATA") + "//Litona//YouTubeSync//configuration.json");
+	static final File songsFile = new File(System.getenv("APPDATA") + "//Litona//YouTubeSync//songs.json");
 
 	private static GUI gui;
 	private static Queue<PreSynchedSong> songsToSynch = new ConcurrentLinkedQueue<PreSynchedSong>() {
@@ -35,19 +41,31 @@ public final class GUI extends JFrame {
 			return !contains(o) && super.add(o);
 		}
 	};
+	private static Queue<PreSynchedSong> songsToPlay = new ConcurrentLinkedQueue<PreSynchedSong>() {
+		@Override
+		public boolean add(PreSynchedSong o) {
+			return !contains(o) && super.add(o);
+		}
+	};
 	static List<SynchedSong> songs = Collections.emptyList();
 	static final Map<String, String> ytPlaylistSources = new ConcurrentHashMap<>();
-	private static File songsFolder;
-	private static boolean changesToSongs = false;
-	private static boolean changesToConfiguration = false;
+	static final Collection<NewSongsChannel> ytNewSongsChannels = new LinkedHashSet<>();
+	static MediaPlayer mediaPlayer;
+	private static File songsFolder, tempFolder;
+	private static boolean changesToSongs, changesToConfiguration, ytPlaylistSourcesCrawlingDone;
 	private static boolean setThumbnails = true;
 
 	static GUI getGui() {
 		return gui;
 	}
 
+	static void changesToConfiguration() {
+		changesToConfiguration = true;
+	}
+
 	public static void main(String... args) {
 		configurationFile.getParentFile().mkdirs();
+		Stream.of(configurationFile.getParentFile().listFiles()).filter(f -> f.getName().endsWith(".ytsc")).forEach(File::delete);
 		// Deserializing Configuration
 		try(Stream<String> configurationJsonStream = Files.lines(configurationFile.toPath())) {
 			JSONObject configuration = new JSONObject(configurationJsonStream.collect(Collectors.joining(" ")));
@@ -55,8 +73,21 @@ public final class GUI extends JFrame {
 				songsFolder = new File(configuration.getString("songsFolder"));
 			else
 				setSongsFolder();
-			configuration.getJSONArray("sources")
-				.forEach(j -> ytPlaylistSources.put(((JSONObject) j).getString("name"), ((JSONObject) j).getString("url")));
+			tempFolder = new File(songsFolder, "temp");
+			tempFolder.mkdir();
+			Arrays.stream(tempFolder.listFiles()).forEach(File::delete);
+			if(configuration.has("sources"))
+				configuration.getJSONArray("sources")
+					.forEach(j -> ytPlaylistSources.put(((JSONObject) j).getString("name"), ((JSONObject) j).getString("url")));
+			if(configuration.has("newSongsChannels"))
+				configuration.getJSONArray("newSongsChannels").forEach(j -> {
+					try {
+						ytNewSongsChannels.add(new NewSongsChannel((JSONObject) j));
+					} catch(ParseException e) {
+						e.printStackTrace();
+						System.out.println("Error parsing newSongsChannel List");
+					}
+				});
 		} catch(IOException e) {
 			System.out.println("Corrupt Configuration File?");
 			e.printStackTrace();
@@ -88,6 +119,7 @@ public final class GUI extends JFrame {
 		}
 
 		gui = new GUI();
+		new JFXPanel();
 	}
 
 	private static void setSongsFolder() {
@@ -104,20 +136,21 @@ public final class GUI extends JFrame {
 		return songsFolder;
 	}
 
+	static File getTempFolder() {
+		return tempFolder;
+	}
+
 	private JPanel basePanel;
-	private JButton addSongsButton;
-	private JButton classifyButton;
+	private JButton addSongsButton, classifyButton, addSourceButton, playButton, exportButton, addNewSongsChannelButton, playNewSongsButton, refreshButton,
+		interruptButton;
 	private JProgressBar progressBar;
+	private SongsToSynchBarMouseAdapter songsToSynchBarMouseAdapter;
 	private JTable songlistTable;
-	private JList<String> tagsList;
-	private JList<String> sourceList;
-	private JButton addSourceButton;
-	private JTextField searchTagsField;
-	private JTextField searchElseField;
-	private JButton playButton;
+	private JList<String> tagsList, sourceList, newSongsChannelList;
+	private JTextField searchTagsField, searchElseField;
 	private JLabel countLabel;
-	private JButton exportButton;
 	private JCheckBox strictModeField;
+	private JLabel newSongLabel;
 
 	private TableRowSorter<DefaultTableModel> songlistSorter;
 
@@ -270,6 +303,21 @@ public final class GUI extends JFrame {
 					} catch(FileNotFoundException e) {
 						e.printStackTrace();
 					}
+
+					// standard export options
+					File nowSongsFolder = new File("D:\\Playlists\\now");
+					File EDMSongsFolder = new File("D:\\Playlists\\EDM");
+					File allSongsFolder = new File("D:\\Playlists\\export");
+					if(nowSongsFolder.exists()) {
+						Arrays.stream(nowSongsFolder.listFiles()).filter(File::isFile).forEach(File::delete);
+						exportSongs(nowSongsFolder, songs.stream().filter(s -> s.getTags().contains("XXnow")).collect(Collectors.toSet()), false);
+					}
+					if(EDMSongsFolder.exists())
+						exportSongs(EDMSongsFolder,
+							songs.stream().filter(s -> s.getTags().contains("EDM") && !s.getTags().contains("XMAS") && !s.getTags().contains("Shit"))
+								.collect(Collectors.toSet()), false);
+					if(allSongsFolder.exists())
+						exportSongs(allSongsFolder, songs.stream().filter(s -> !s.getTags().contains("XXdelete")).collect(Collectors.toSet()), false);
 				}
 				if(changesToConfiguration) { // only if changes were applied
 					// Serializing songs
@@ -277,14 +325,17 @@ public final class GUI extends JFrame {
 					if(songsFolder != null)
 						json.put("songsFolder", songsFolder);
 
-					JSONArray array = new JSONArray(); // array for ytplaylist sources with name and url fields
+					JSONArray arrayPl = new JSONArray(); // array for ytplaylist sources with name and url fields
 					ytPlaylistSources.forEach((n, u) -> {
 						JSONObject source = new JSONObject();
 						source.put("name", n);
 						source.put("url", u);
-						array.put(source);
+						arrayPl.put(source);
 					});
-					json.put("sources", array);
+					json.put("sources", arrayPl);
+					JSONArray arrayCh = new JSONArray(); // array for yt new songs channels with name and url fields
+					ytNewSongsChannels.stream().map(NewSongsChannel::toJson).forEach(arrayCh::put);
+					json.put("newSongsChannels", arrayCh);
 
 					System.out.println("Deleting old config");
 					configurationFile.delete();
@@ -316,6 +367,7 @@ public final class GUI extends JFrame {
 		songlistTable.setRowSorter(songlistSorter = new TableRowSorter<>((DefaultTableModel) songlistTable.getModel()));
 
 		sourceList.setModel(new DefaultListModel<>());
+		newSongsChannelList.setModel(new DefaultListModel<>());
 		tagsList.setModel(new DefaultListModel<>()); // will be filled in DocumentListener
 		// Filling SourcePanel
 		ytPlaylistSources.keySet().stream().sorted(Comparator.comparing(String::toLowerCase))
@@ -341,6 +393,23 @@ public final class GUI extends JFrame {
 						searchTagsField.setText(searchTagsField.getText().replaceAll(" " + tagToInput.substring(1) + " ", ""));
 				} else
 					searchTagsField.setText(searchTagsField.getText() + (SwingUtilities.isRightMouseButton(e) ? " -" : " ") + tagToInput + " ");
+			}
+		});
+		// Filling newSongsChannelsPanel
+		ytNewSongsChannels.forEach(c -> {
+			((DefaultListModel<String>) newSongsChannelList.getModel()).addElement(c.getName() + " from ");
+			updateAddNewSongsChannelList(c);
+		});
+		newSongsChannelList.addMouseListener(new MouseAdapter() {
+			@Override
+			public void mouseReleased(MouseEvent e) {
+				if(SwingUtilities.isRightMouseButton(e)) {
+					ytNewSongsChannels.forEach(NewSongsChannel::interrupt);
+					String tagToInput = newSongsChannelList.getModel().getElementAt(newSongsChannelList.locationToIndex(e.getPoint()));
+					String[] split;
+					new AddNewSongsChannelGUI((split = tagToInput.split(" from "))[0], "unchanged", (split = split[1].split(" to "))[0],
+						split[1].split(" = ")[0]);
+				}
 			}
 		});
 
@@ -380,6 +449,7 @@ public final class GUI extends JFrame {
 		filterListener.changedUpdate(null);
 
 		addSourceButton.addActionListener(e -> new AddSourceGUI());
+		addNewSongsChannelButton.addActionListener(e -> new AddNewSongsChannelGUI());
 
 		playButton.addActionListener(e -> {
 			if(new File("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe").exists()) {
@@ -387,9 +457,8 @@ public final class GUI extends JFrame {
 				try {
 					try(PrintWriter out = new PrintWriter(tmp)) {
 						for(int i : songlistTable.getSelectedRows())
-							out.println(
-								"start \"C:\\Program Files\\VideoLAN\\VLC\\vlc.exe\" \"" + songs.get(songlistTable.convertRowIndexToModel(i)).getFile()
-									.getPath() + "\"");
+							out.println("start \"\" \"C:\\Program Files\\VideoLAN\\VLC\\vlc.exe\" \"" + songs.get(songlistTable.convertRowIndexToModel(i))
+								.getFile().getPath() + "\" --one-instance --playlist-enqueue");
 					}
 					new ProcessBuilder(tmp.getPath()).inheritIO().start().waitFor();
 				} catch(IOException | InterruptedException exception) {
@@ -410,55 +479,33 @@ public final class GUI extends JFrame {
 			});
 		}).start();
 
+		refreshAddNewSongsChannelList();
+
 		new Thread(() -> {
 			progressBar.setMaximum(ytPlaylistSources.size());
 			progressBar.setString("Synching songs...");
 			AtomicInteger threadIndex = new AtomicInteger();
 			ytPlaylistSources.forEach((n, u) -> {
-				try(BufferedReader reader = new BufferedReader(new InputStreamReader(
-					new ProcessBuilder("youtube-dl", u, "--dump-json", "--flat-playlist", "--age-limit", "99").start().getInputStream()))) {
-					progressBar.setValue(threadIndex.incrementAndGet());
-					reader.lines().map(JSONObject::new).forEach(json -> {
-						String ytId = json.getString("id");
-						if(songs.stream().map(SynchedSong::getYtId).noneMatch(ytId::equals))
-							songsToSynch.add(songsToSynch.stream().filter(alreadyIn -> alreadyIn.getYtId().equals(ytId)).findAny()
-								.orElseGet(() -> new PreSynchedSong(ytId, json.getString("title"), Collections.emptySet())).addTagQuietly(n));
-					});
+				try {
+					Process p = Runtime.getRuntime().exec("yt-dlp " + u + " --dump-json --ignore-errors --flat-playlist --age-limit 99");
+					try(BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+						progressBar.setValue(threadIndex.incrementAndGet());
+						reader.lines().map(JSONObject::new).forEach(json -> {
+							String ytId = json.getString("id");
+							if(songs.stream().map(SynchedSong::getYtId).noneMatch(ytId::equals))
+								songsToSynch.add(songsToSynch.stream().filter(alreadyIn -> alreadyIn.getYtId().equals(ytId)).findAny()
+									.orElseGet(() -> new PreSynchedSong(ytId, json.getString("title"), Collections.emptySet())).addTagQuietly(n));
+						});
+					} catch(IOException e) {
+						e.printStackTrace();
+					}
 				} catch(IOException e) {
 					e.printStackTrace();
 				}
 			});
-			progressBar.setString(songsToSynch.isEmpty() ? "Finished synching songs" : "Click to synch " + songsToSynch.size() + " songs");
 			progressBar.setValue(progressBar.getMaximum());
-			progressBar.addMouseListener(new MouseAdapter() {
-				@Override
-				public void mouseReleased(MouseEvent e) {
-					progressBar.removeMouseListener(this);
-					progressBar.setString("");
-					progressBar.setValue(0);
-					new Thread(() -> {
-						if(!songsToSynch.isEmpty()) {
-							SongGUI openGui;
-							SongGUI nextGui;
-							int numberOfSongs = songsToSynch.size();
-							int myIndex = 0;
-							nextGui = new SongGUI(songsToSynch.remove(), numberOfSongs,
-								myIndex++); // prepare first GUI (means loading yt Information from URL)
-							while(!songsToSynch.isEmpty()) {
-								openGui = nextGui;
-								openGui.frame.setVisible(true); // open first GUI, so user can input information while next GUI is prepared in next line
-								nextGui = new SongGUI(songsToSynch.remove(), numberOfSongs, myIndex++); // prepare next GUI
-								if(!DownloadGuiFinalizer.singleton().successGui(openGui))
-									return;
-							}
-							// last song is only prepared in GUI, never downloaded. Here comes the code for downloading this song.
-							// second usage for this code piece: If only one song is to be synched, loop will never be executed. First song needs to be downloaded as well!
-							nextGui.frame.setVisible(true);
-							DownloadGuiFinalizer.singleton().successGui(nextGui);
-						}
-					}).start();
-				}
-			});
+			ytPlaylistSourcesCrawlingDone = true;
+			prepareProgressBarForSynchingSongs();
 		}).start();
 		addSongsButton.addActionListener(e -> {
 			new Thread(() -> {
@@ -537,59 +584,54 @@ public final class GUI extends JFrame {
 			JFileChooser fc = new JFileChooser();
 			fc.setDragEnabled(false);
 			fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-			if(fc.showOpenDialog(fc) == JFileChooser.APPROVE_OPTION) {
-				progressBar.setValue(0);
-				progressBar.setString("Exporting songs...");
-				progressBar.setMaximum(songlistTable.getSelectedRowCount());
-				File fcDir = fc.getSelectedFile();
-				File fcDirJson = new File(fcDir, "songs.json");
-				Collection<SynchedSong> fcDirSongs = new TreeSet<>();
-				if(fcDirJson.exists())
-					try(Stream<String> songsJsonStream = Files.lines(fcDirJson.toPath(), StandardCharsets.UTF_8)) {
-						JSONArray array = new JSONObject(songsJsonStream.collect(Collectors.joining(" "))).getJSONArray("songs");
-						for(int i = 0; i < array.length(); i++)
-							fcDirSongs.add(new SynchedSong(array.getJSONObject(i)));
-					} catch(IOException | JSONException e2) {
-						System.out.println("No fcSongs File");
-						e2.printStackTrace();
-					}
-
-				// Serializing songs
-				JSONObject json = new JSONObject();
-				JSONArray array = new JSONArray();
-				Collection<SynchedSong> copyList = new HashSet<>();
-				for(int i : songlistTable.getSelectedRows())
-					try {
-						SynchedSong toCopy = songs.get(songlistTable.convertRowIndexToModel(i));
-						array.put(toCopy.toJson(true));
-						if(!fcDirSongs.contains(toCopy))
-							copyList.add(toCopy);
-					} catch(IOException ioException) {
-						ioException.printStackTrace();
-					}
-				json.put("songs", array);
-				AtomicInteger integer = new AtomicInteger();
+			if(fc.showOpenDialog(fc) == JFileChooser.APPROVE_OPTION)
+				exportSongs(fc.getSelectedFile(),
+					IntStream.of(songlistTable.getSelectedRows()).mapToObj(i -> songs.get(songlistTable.convertRowIndexToModel(i)))
+						.collect(Collectors.toSet()), true);
+		});
+		refreshButton.addActionListener(e -> refreshAddNewSongsChannelList());
+		interruptButton.addActionListener(e -> {
+			interruptButton.setEnabled(false);
+			ytNewSongsChannels.forEach(NewSongsChannel::interrupt);
+		});
+		playNewSongsButton.addActionListener(e -> {
+			if(ytNewSongsChannels.stream().noneMatch(NewSongsChannel::isRunning))
 				new Thread(() -> {
-					copyList.parallelStream().forEach(toCopy -> {
-						try {
-							progressBar.setValue(integer.incrementAndGet());
-							Files.copy(toCopy.getFile().toPath(), new File(fcDir, toCopy.getFile().getName()).toPath());
-						} catch(IOException ioException) {
-							ioException.printStackTrace();
+					playNewSongsButton.setEnabled(false);
+					ytNewSongsChannels.stream().map(NewSongsChannel::getSongs).flatMap(Collection::stream).forEach(songsToPlay::add);
+					if(!songsToPlay.isEmpty()) { // code analog to songgui downloading
+						NewSongSupplier playingSong;
+						NewSongSupplier nextSong = null;
+						do {
+							playingSong = nextSong;
+							if(playingSong != null)
+								newSongLabel.setText(playingSong
+									.startAndGetYtTitle()); // open first GUI, so user can input information while next GUI is prepared in next line
+							try {
+								PreSynchedSong next = songsToPlay.remove();
+								// TODO: replace nextSong = songsToSynch.contains(next) ? null : new NewSongSupplier(next); // prepare next GUI
+								nextSong = new NewSongSupplier(next, false);
+							} catch(FileNotFoundException fileNotFoundException) {
+								fileNotFoundException.printStackTrace();
+								nextSong = null;
+							}
+							if(playingSong == null)
+								continue;
+							if(playingSong.finishPlayingThenIsCancel()) {
+								playNewSongsButton.setEnabled(true);
+								newSongLabel.setText("");
+								return;
+							}
+						} while(!songsToPlay.isEmpty());
+						// last song is only prepared in GUI, never downloaded. Here comes the code for downloading this song.
+						// second usage for this code piece: If only one song is to be synched, loop will never be executed. First song needs to be downloaded as well!
+						if(nextSong != null) {
+							newSongLabel.setText(nextSong.startAndGetYtTitle());
+							nextSong.finishPlayingThenIsCancel();
 						}
-					});
-					progressBar.setString("Finished export!");
-					progressBar.setValue(progressBar.getMaximum());
-					System.out.println("Export finished");
+						newSongLabel.setText("");
+					}
 				}).start();
-				System.out.println("Writing export songs file, songs are BEING copied");
-				try(PrintWriter out = new PrintWriter(
-					new OutputStreamWriter(new FileOutputStream(new File(fcDir, "songs.json")), StandardCharsets.UTF_8))) {
-					out.println(json.toString());
-				} catch(FileNotFoundException e1) {
-					e1.printStackTrace();
-				}
-			}
 		});
 
 		this.setVisible(true);
@@ -602,6 +644,34 @@ public final class GUI extends JFrame {
 			((DefaultListModel<String>) sourceList.getModel()).addElement(name);
 		} else
 			System.out.println("Source already listed?");
+	}
+
+	void addNewSongsChannel(String name, String url, String from, String to) {
+		if(!name.isEmpty() && !url.isEmpty()) {
+			if(ytNewSongsChannels.stream().noneMatch(c -> c.getName().equals(name))) {
+				try {
+					NewSongsChannel channel = new NewSongsChannel(name, url);
+					ytNewSongsChannels.add(channel);
+					((DefaultListModel<String>) newSongsChannelList.getModel()).addElement(name);
+					changesToConfiguration = true;
+					updateAddNewSongsChannelList(channel);
+				} catch(ParseException e) {
+					e.printStackTrace();
+				}
+			} else
+				ytNewSongsChannels.stream().filter(channel -> channel.getName().equals(name)).findAny().ifPresent(channel -> {
+					try {
+						channel.setFrom(from);
+						channel.setTo(to);
+						updateAddNewSongsChannelList(channel);
+					} catch(ParseException e) {
+						e.printStackTrace();
+					}
+				});
+			ytNewSongsChannels.stream().filter(NewSongsChannel::isRunning).forEach(NewSongsChannel::interrupt);
+			refreshButton.setFont(refreshButton.getFont().deriveFont(Font.ITALIC));
+		} else
+			System.out.println("New songs channel already listed?");
 	}
 
 	void addSong(SynchedSong newSong) {
@@ -626,5 +696,106 @@ public final class GUI extends JFrame {
 			return false;
 		}
 		return true;
+	}
+
+	private void exportSongs(File folder, Collection<SynchedSong> possibleExportSongs, boolean threadded) {
+		progressBar.setValue(0);
+		progressBar.setString("Exporting songs...");
+		progressBar.setMaximum(songlistTable.getSelectedRowCount());
+		File fcDirJson = new File(folder, "songs.json");
+		Collection<SynchedSong> fcDirSongs = new TreeSet<>();
+		if(fcDirJson.exists())
+			try(Stream<String> songsJsonStream = Files.lines(fcDirJson.toPath(), StandardCharsets.UTF_8)) {
+				JSONArray array = new JSONObject(songsJsonStream.collect(Collectors.joining(" "))).getJSONArray("songs");
+				for(int i = 0; i < array.length(); i++)
+					fcDirSongs.add(new SynchedSong(array.getJSONObject(i)));
+			} catch(IOException | JSONException e2) {
+				System.out.println("No fcSongs File");
+				e2.printStackTrace();
+			}
+
+		// Serializing songs
+		JSONObject json = new JSONObject();
+		JSONArray array = new JSONArray();
+		Collection<SynchedSong> copyList = new HashSet<>();
+		possibleExportSongs.forEach(toCopy -> {
+			try {
+				array.put(toCopy.toJson(true));
+				if(!fcDirSongs.contains(toCopy))
+					copyList.add(toCopy);
+			} catch(FileNotFoundException e) {
+				e.printStackTrace();
+			}
+		});
+		json.put("songs", array);
+		System.out.println("Writing export songs file, songs are BEING copied");
+		if(threadded)
+			new Thread(() -> {
+				exportSongsCopySongs(folder, copyList);
+			}).start();
+		else
+			exportSongsCopySongs(folder, copyList);
+		try(PrintWriter out = new PrintWriter(new OutputStreamWriter(new FileOutputStream(new File(folder, "songs.json")), StandardCharsets.UTF_8))) {
+			out.println(json.toString());
+		} catch(FileNotFoundException e1) {
+			e1.printStackTrace();
+		}
+	}
+
+	private void exportSongsCopySongs(File folder, Collection<SynchedSong> copyList) {
+		AtomicInteger integer = new AtomicInteger();
+		copyList.parallelStream().forEach(toCopy -> {
+			try {
+				progressBar.setValue(integer.incrementAndGet());
+				Files.copy(toCopy.getFile().toPath(), new File(folder, toCopy.getFile().getName()).toPath());
+			} catch(IOException ioException) {
+				ioException.printStackTrace();
+			}
+		});
+		progressBar.setString("Finished export!");
+		progressBar.setValue(progressBar.getMaximum());
+		System.out.println("Export finished");
+	}
+
+	void addSongToSynch(PreSynchedSong song) {
+		songsToSynch.add(song);
+	}
+
+	boolean containsSongToSynch(PreSynchedSong song) {
+		return songsToSynch.contains(song);
+	}
+
+	void prepareProgressBarForSynchingSongs() {
+		if(ytPlaylistSourcesCrawlingDone) {
+			progressBar.setString(songsToSynch.isEmpty() ? "Finished synching songs" : "Click to synch " + songsToSynch.size() + " songs");
+			if(songsToSynchBarMouseAdapter == null || !Arrays.asList(progressBar.getMouseListeners()).contains(songsToSynchBarMouseAdapter))
+				progressBar.addMouseListener(songsToSynchBarMouseAdapter = new SongsToSynchBarMouseAdapter(progressBar, songsToSynch));
+		} else
+			progressBar.setString("Added to synching queue, please wait for indexing YouTube Playlist Sources...");
+	}
+
+	void updateAddNewSongsChannelList(NewSongsChannel c) {
+		DefaultListModel<String> model = (DefaultListModel<String>) newSongsChannelList.getModel();
+		for(int i = 0; i < model.size(); i++)
+			if(model.getElementAt(i).startsWith(c.getName() + " from "))
+				model.set(i, c.getName() + " from " + c.getFrom() + " to " + c.getTo() + " = " + c.getSize());
+	}
+
+	void refreshAddNewSongsChannelList() {
+		if(addNewSongsChannelButton.isEnabled())
+			new Thread(() -> {
+				refreshButton.setEnabled(false);
+				addNewSongsChannelButton.setEnabled(false);
+				playNewSongsButton.setEnabled(false);
+				interruptButton.setEnabled(true);
+				refreshButton.setFont(refreshButton.getFont().deriveFont(Font.PLAIN));
+				ytNewSongsChannels.parallelStream().forEach(NewSongsChannel::refresh);
+				if(ytNewSongsChannels.stream().anyMatch(NewSongsChannel::isInterrupted))
+					refreshButton.setFont(refreshButton.getFont().deriveFont(Font.ITALIC));
+				addNewSongsChannelButton.setEnabled(true);
+				refreshButton.setEnabled(true);
+				playNewSongsButton.setEnabled(true);
+				interruptButton.setEnabled(false);
+			}).start();
 	}
 }

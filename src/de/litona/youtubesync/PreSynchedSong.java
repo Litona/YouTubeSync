@@ -12,6 +12,7 @@ public class PreSynchedSong {
 	protected final String ytId;
 	protected String ytTitle;
 	protected Collection<String> tags = new TreeSet<>(Comparator.comparing(String::toLowerCase));
+	protected NewSongsChannel channel;
 
 	protected PreSynchedSong(String ytId, String ytTitle, Collection<String> tags) {
 		this.ytId = ytId;
@@ -19,14 +20,15 @@ public class PreSynchedSong {
 		this.tags.addAll(tags);
 	}
 
+	protected PreSynchedSong(String ytId, String ytTitle, NewSongsChannel channel) {
+		this(ytId, ytTitle, Collections.emptySet());
+		this.channel = channel;
+	}
+
 	protected PreSynchedSong(String ytId, String ytTitle, JSONArray tags) {
 		this.ytId = ytId;
 		this.ytTitle = ytTitle;
 		tags.toList().stream().map(String.class::cast).forEach(this.tags::add);
-	}
-
-	public SynchedSong synch() {
-		return null;
 	}
 
 	public String getYtId() {
@@ -65,6 +67,15 @@ public class PreSynchedSong {
 	PreSynchedSong addTagQuietly(String tag) {
 		tags.add(tag);
 		return this;
+	}
+
+	public NewSongsChannel getNewSongsChannel() {
+		return channel;
+	}
+
+	@Override
+	public int hashCode() {
+		return ytId.hashCode();
 	}
 
 	@Override
